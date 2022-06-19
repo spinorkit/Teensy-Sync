@@ -9,6 +9,10 @@
 #include <SPI.h>
 #include <RH_RF95.h>
 
+#define ADCTIMER_OUT 2
+
+#define PIT_ADCTIMER_IDX 1
+
 /* for feather32u4 
 #define RFM95_CS 8
 #define RFM95_RST 4
@@ -83,11 +87,78 @@
 //   #define RFM95_INT     4    // "C"
 // #endif
 
+/*
+Teensy Pin, The IMXRT pin name, and the GPIO Port.pin
+Pin	Name	GPIO
+ 1	      AD_B0_02	1.02
+ 0	      AD_B0_03	1.03
+24/A10	AD_B0_12	1.12
+25/A11	AD_B0_13	1.13
+19/A5	   AD_B1_00	1.16
+18/A4	   AD_B1_01	1.17
+14/A0	   AD_B1_02	1.18
+15/A1	   AD_B1_03	1.19
+40/A16	AD_B1_04 	1.20
+41/A17	AD_B1_05 	1.21
+17/A3	   AD_B1_06	1.22
+16/A2	   AD_B1_07	1.23
+22/A8	   AD_B1_08	1.24
+23/A9	   AD_B1_09	1.25
+20/A6	   AD_B1_10	1.26
+21/A7	   AD_B1_11	1.27
+38/A14	AD_B1_12 	1.28
+39/A5	   AD_B1_13 	1.29
+26/A12	AD_B1_14	1.30
+27/A13	AD_B1_15	1.31
+10	      B0_00	2.00
+12	      B0_01	2.01
+11	      B0_02	2.02
+13	      B0_03	2.03
+6	      B0_10	2.10
+9	      B0_11	2.11
+32	      B0_12	2.12
+8	      B1_00	2.16
+7	      B1_01	2.17
+36	      B1_02    	2.18
+37	      B1_03    	2.19
+35	      B1_12    	2.28
+34	      B1_13    	2.29
+45	      SD_B0_00	3.12
+44	      SD_B0_01	3.13
+43	      SD_B0_02	3.14
+42	      SD_B0_03	3.15
+47	      SD_B0_04	3.16
+46	      SD_B0_05	3.17
+28	      EMC_32	3.18
+31	      EMC_36	3.22
+30	      EMC_37	3.23
+ 2	      EMC_04	4.04
+ 3	      EMC_05	4.05
+ 4	      EMC_06	4.06
+33	      EMC_07	4.07
+5	      EMC_08	4.08
+51	      EMC_22	4.22
+48	      EMC_24	4.24
+53	      EMC_25	4.25
+52	      EMC_26	4.26
+49	      EMC_27	4.27
+50	      MC_28	4.28
+54	      EMC_29	4.29
+29	      EMC_31	4.31
+---	----	----
+*/
+
+
 // Change to 434.0 or other frequency, must match RX's freq!
 #define RF95_FREQ 915.0
 
 // Singleton instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
+
+//Bug in imxrt.h
+#define CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED		((uint32_t)(1))
+
+extern volatile uint32_t F_BUS_ACTUAL;
 
 volatile int gLastFrameNumber = 0;
 volatile int gLastRawFrameNumber = -1;
@@ -95,6 +166,8 @@ volatile int32_t gPrevFrameTick = -1;
 
 extern "C"
 {
+//extern void sys_pll_start();
+
 extern void usb_isr(void);
 extern void usb_start_sof_interrupts(int interface);
 
@@ -130,12 +203,158 @@ NVIC_ENABLE_IRQ(IRQ_USB1);
 }
 
 
+/*
+F_CPU: 528000000
+F_CPU_ACTUAL: 528000000     
+F_BUS_ACTUAL: 132000000     
+CCM_ANALOG_PLL_ARM: 80002058
+CCM_ANALOG_PLL_SYS_SS: 0    
+CCM_CACRR: 1
+CCM_CBCMR: B5AE8304
+CCM_CSCMR1: 66130040        
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001
+CCM_ANALOG_PLL_SYS_NUM: 0   
+CCM_ANALOG_PLL_SYS_DENOM: 18
+
+
+Teensy LoRa TX Test!        
+F_CPU: 600000000
+F_CPU_ACTUAL: 600000000     
+F_BUS_ACTUAL: 150000000     
+CCM_ANALOG_PLL_ARM: 80002064
+CCM_ANALOG_PLL_SYS_SS: 0    
+CCM_CACRR: 1
+CCM_CBCMR: B5AE8304
+CCM_CSCMR1: 66130040
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001
+CCM_ANALOG_PLL_SYS_NUM: 0
+CCM_ANALOG_PLL_SYS_DENOM: 18
+LoRa radio init OK!
+CCM_CACRR: 1
+CCM_CBCMR: B5AE8304    
+CCM_CSCMR1: 66130040
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001
+CCM_ANALOG_PLL_SYS_NUM: 0
+CCM_ANALOG_PLL_SYS_DENOM: 18
+
+F_BUS_ACTUAL: 150000000     
+CCM_CBCMR: B5AE8304   E=>PLL1
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001    0x80000000=>isLocked, 0x2000 =>enable, 0x0001 => Fout=Fref*22.
+CCM_ANALOG_PLL_SYS_NUM: 0   
+CCM_ANALOG_PLL_SYS_DENOM: 18
+LoRa radio init OK!
+
+CCM_CBCMR: 3048112900 (0xB5AE 8304)  E=>PLL1
+CCM_ANALOG_PLL_SYS: 2147491841
+CCM_ANALOG_PLL_SYS_NUM: 0     
+CCM_ANALOG_PLL_SYS_DENOM: 18  
+LoRa radio init OK!
+
+CCM_ANALOG_PLL_SYS: 2147491841 (0x8000 2001), 0x80000000=>isLocked, 0x2000 =>enable, 0x0001 => Fout=Fref*22.
+CCM_ANALOG_PLL_SYS_NUM: 0     
+CCM_ANALOG_PLL_SYS_DENOM: 18  
+*/
+
+
+/*
+
+need to switch to alternate clock during reconfigure of ARM PLL
+USB PLL is running, so we can use 120 MHz
+CCM_CBCDR &= ~CCM_CBCDR_PERIPH_CLK_SEL
+New Frequency: ARM=528000000, IPG=132000000
+F_CPU: 528000000
+F_CPU_ACTUAL: 528000000
+F_BUS_ACTUAL: 132000000
+CCM_ANALOG_PLL_ARM: 80002058
+CCM_ANALOG_PLL_SYS_SS: 0
+CCM_CACRR: 1
+CCM_CBCMR: B5AE8304
+CCM_CSCMR1: 66130040  //24 MHz from OSC
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001
+CCM_ANALOG_PLL_SYS_NUM: 0
+CCM_ANALOG_PLL_SYS_DENOM: 18
+
+
+Teensy LoRa TX Test!
+F_CPU: 528000000
+F_CPU_ACTUAL: 528000000
+F_BUS_ACTUAL: 132000000
+CCM_ANALOG_PLL_ARM: 80002042
+CCM_ANALOG_PLL_SYS_SS: 0
+CCM_CACRR: 1
+CCM_CBCMR: B5AE8304
+CCM_CSCMR1: 6613000A
+CCM_CBCDR: 180A8300
+CCM_ANALOG_PLL_SYS: 80002001
+CCM_ANALOG_PLL_SYS_NUM: 0
+CCM_ANALOG_PLL_SYS_DENOM: 18
+*/
+
+/*
+Change to 12 MHz from IPG_CLK_ROOT
+CCM_CSCMR1: 6613000A
+*/
+
+//ADC_ETC_CTRL
+
+void xbar_connect(unsigned int input, unsigned int output)
+{
+  if (input >= 88) return;
+  if (output >= 132) return;
+  volatile uint16_t *xbar = &XBARA1_SEL0 + (output / 2);
+  uint16_t val = *xbar;
+  if (!(output & 1)) {
+    val = (val & 0xFF00) | input;
+  } else {
+    val = (val & 0x00FF) | (input << 8);
+  }
+  *xbar = val;
+}
+
+void xbar_init() 
+{
+CCM_CCGR2 |= CCM_CCGR2_XBAR1(CCM_CCGR_ON);   //turn clock on for xbara1
+
+//EMC_04 (Teensy4.1 pin 2, ADCTIMER_OUT)
+//IOMUXC XBAR_INOUT06 function direction select: output
+IOMUXC_GPR_GPR6 |= IOMUXC_GPR_GPR6_IOMUXC_XBAR_DIR_SEL_6;
+
+//ALT3 — Select mux mode: ALT3 mux port: XBAR1_INOUT06 of instance: xbar1 (page 430)
+IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = (IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 & ~7) | 3;
+
+xbar_connect(57, 6); //PIT_TRIGGER1, IOMUX_XBAR_INOUT06 (XBAR1_OUT06)
+
+
+//PIT_TRIGGER1, ADC_ETC_TRIG00 see pages 63,71 : Chapter 4 Interrupts, DMA Events, and XBAR Assignments
+//xbar_connect(57, 103);   // pit to adc_etc
+
+}
+
+
+void pit_init(uint32_t cycles)
+{
+  CCM_CCGR1 |= CCM_CCGR1_PIT(CCM_CCGR_ON);
+  PIT_MCR = 0;
+
+  IMXRT_PIT_CHANNELS[PIT_ADCTIMER_IDX].LDVAL = cycles-1;
+  IMXRT_PIT_CHANNELS[PIT_ADCTIMER_IDX].TCTRL = PIT_TCTRL_TEN;
+}
+
+
 void setup() 
 {
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
   
   pinMode(RFM95_CS, OUTPUT);          // Chip Select is an output
+
+  pinMode(ADCTIMER_OUT, OUTPUT);
+
 
    USB1_SetHandler(&USBHandlerHook);
 
@@ -146,11 +365,43 @@ void setup()
 
   delay(100);
 
+  xbar_init();
+
+  //adc_init();
+  //adc_etc_init();
+
+  pit_init(12 * 10);
+
 #if defined(TEENSYDUINO)
   Serial.println("Teensy LoRa TX Test!");
 #elif defined(ADAFRUIT_FEATHER_M0) || defined(ADAFRUIT_FEATHER_M0_EXPRESS) || defined(ARDUINO_SAMD_FEATHER_M0)
    Serial.println("Teensy LoRa TX Test!");
 #endif
+
+//set_arm_clock_pll2_528();
+
+Serial.println("F_CPU: "+String(F_CPU));
+Serial.println("F_CPU_ACTUAL: "+String(F_CPU_ACTUAL));
+Serial.println("F_BUS_ACTUAL: "+String(F_BUS_ACTUAL));
+
+
+
+
+Serial.println("CCM_ANALOG_PLL_ARM: "+String(CCM_ANALOG_PLL_ARM, HEX));
+Serial.println("CCM_ANALOG_PLL_SYS_SS: "+String(CCM_ANALOG_PLL_SYS_SS, HEX));
+
+Serial.println("CCM_CACRR: "+String(CCM_CACRR, HEX));
+Serial.println("CCM_CBCMR: "+String(CCM_CBCMR, HEX));
+Serial.println("CCM_CSCMR1: "+String(CCM_CSCMR1, HEX));
+Serial.println("CCM_CBCDR: "+String(CCM_CBCDR, HEX));
+Serial.println("CCM_ANALOG_PLL_SYS: "+String(CCM_ANALOG_PLL_SYS, HEX));
+Serial.println("CCM_ANALOG_PLL_SYS_NUM: "+String(CCM_ANALOG_PLL_SYS_NUM));
+Serial.println("CCM_ANALOG_PLL_SYS_DENOM: "+String(CCM_ANALOG_PLL_SYS_DENOM));
+
+
+
+
+
 
 
   // manual reset
