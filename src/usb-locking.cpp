@@ -47,6 +47,13 @@ const int kFixedPointScaling = kOneOverLagGainus*kHighSpeedTimerTicksPerus;
 const int kPLLOffsetMax = 127;
 const int kPLLOffsetMin = -128;
 
+// 1 us per ms is larger than any crystal error we should need to measure
+const int kMaxRateErrorClipTicksPerms = 1 * kHighSpeedTimerTicksPerus;
+const uint32_t kLockDetectAccumTCms = 256;
+const int32_t kLockedPhaseLimit_us = 20;
+const int32_t kLockedPhaseLimitTicks = kLockedPhaseLimit_us * kHighSpeedTimerTicksPerus;
+
+volatile bool gUSBLocked = false;
 
 //Integrator for integral feedback to remove DC error
 volatile int32_t sPSDPhaseAccum = 0;
@@ -90,52 +97,79 @@ if(!(rawFrameNumber & 0x07))
 
    int16_t frameNumber = rawFrameNumber >> 3;
 
-      int phase = frameTick;
-      //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
-      if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
-         phase -= kHighSpeedTimerTicksPerUSBFrame;
+   static int32_t sLastPhase = 0;
 
-      //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
-      gLeadPhaseAccum += phase;
-      int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
-      gLeadPhaseAccum -= leadPhase;
+   int phase = frameTick;
+   //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
+   if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
+      phase -= kHighSpeedTimerTicksPerUSBFrame;
 
-      //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
-      int signOfPhase = 0;
-      if(phase > 0)
-         signOfPhase = 1;
-      else if(phase < 0)
-        signOfPhase = -1;
+   // If phase > 0 the USB frame was later than the SYSTICK wrap so we need to
+   // slow down the system clock a little.
 
-      //Calculate the filtered error signal
-      int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
-         leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
-         sPSDPhaseAccum)/kFixedPointScaling;
-      sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
+   // One-sided clip of phase to reduce effect of ISR latency spikes.
+   //  I.e. clip large +ve going deltas resulting from the ISR being delayed, causing phase
+   //  to be larger than it should be.
+   int32_t deltaPhaseTicks = phase - sLastPhase;
+   if (gUSBLocked && deltaPhaseTicks > kMaxRateErrorClipTicksPerms)
+      {
+      phase = sLastPhase + kMaxRateErrorClipTicksPerms;
+      //digitalWrite(LED_BUILTIN, LOW); // Diagnostic
+      }
 
-      filterOut *= kVCOGain;
+   sLastPhase = phase;
 
-      //Clip to limits of DCO
-      if(filterOut > kPLLOffsetMax)
-         filterOut = kPLLOffsetMax;
-      else if(filterOut < kPLLOffsetMin)
-         filterOut = kPLLOffsetMin;
+   //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
+   gLeadPhaseAccum += phase;
+   int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
+   gLeadPhaseAccum -= leadPhase;
+
+   // First order LPF for lock detect
+   static uint32_t sLockDetectAccum = 0;
+
+   sLockDetectAccum += abs(leadPhase);
+   int32_t lockError = sLockDetectAccum / kLockDetectAccumTCms;
+
+   sLockDetectAccum -= lockError;
+   gUSBLocked = abs(lockError) < kLockedPhaseLimitTicks;
 
 
-      int32_t newPLLControlVal = -filterOut;
-      gLastPLLControlVal = newPLLControlVal;
+   //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
+   int signOfPhase = 0;
+   if(phase > 0)
+      signOfPhase = 1;
+   else if(phase < 0)
+      signOfPhase = -1;
 
-      SetPllSysFreqOffset(newPLLControlVal);
+   //Calculate the filtered error signal
+   int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
+      leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
+      sPSDPhaseAccum)/kFixedPointScaling;
+   sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
 
-      //Set DCO control value
-      #ifdef PHASE_LOCK_TO_USB_SOF
-      #if defined(__SAMD51__)
-      OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
-      #else
-      //SAMD21 has 10 bit fine DCO control
-      SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
-      #endif
-      #endif
+   filterOut *= kVCOGain;
+
+   //Clip to limits of DCO
+   if(filterOut > kPLLOffsetMax)
+      filterOut = kPLLOffsetMax;
+   else if(filterOut < kPLLOffsetMin)
+      filterOut = kPLLOffsetMin;
+
+
+   int32_t newPLLControlVal = -filterOut;
+   gLastPLLControlVal = newPLLControlVal;
+
+   SetPllSysFreqOffset(newPLLControlVal);
+
+   //Set DCO control value
+   #ifdef PHASE_LOCK_TO_USB_SOF
+   #if defined(__SAMD51__)
+   OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+   #else
+   //SAMD21 has 10 bit fine DCO control
+   SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
+   #endif
+   #endif
 
    gLastFrameNumber = frameNumber;
    gLastUSBSOFTimeus = newUSBSOFTimeus;
