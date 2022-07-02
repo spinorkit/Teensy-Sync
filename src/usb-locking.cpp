@@ -5,6 +5,9 @@
 
 #include "usb-locking.h"
 
+
+#define ADI_TEST_PLL_STEP_RESPONSE 0
+
 //Bug in imxrt.h
 #define CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED		((uint32_t)(1))
 
@@ -28,8 +31,7 @@ volatile int gLastPLLControlVal = 0;
 
 volatile bool gUSBBPinState = false;
 
-const int kHighSpeedTimerTicksPerus = 4;
-const int kHighSpeedTimerTicksPerUSBFrame = 1000*kHighSpeedTimerTicksPerus;
+const int kVCOGain = 1;
 
 const int kOneOverLeadGainus = 1;   // 1/proportional gain
 
@@ -55,9 +57,14 @@ const int kLeadPhaseTC = 16;
 
 volatile int32_t gLastUSBSOFTimeus = 0;
 
+int32_t gFrameCount = 0;
+
 inline void SetPllSysFreqOffset(int32_t offsetPartsPer2p16)
 {
-CCM_ANALOG_PLL_SYS_NUM = offsetPartsPer2p16 & 0x3fffffff; //units of 1 part in 64*1024
+#if ADI_TEST_PLL_STEP_RESPONSE
+offsetPartsPer2p16 -= ((++gFrameCount/10000) & 1) * kPLLOffsetMax/2;
+#endif
+CCM_ANALOG_PLL_SYS_NUM = (offsetPartsPer2p16) & 0x3fffffff; //units of 1 part in 64*1024
 }
 
 
@@ -106,13 +113,14 @@ if(!(rawFrameNumber & 0x07))
          sPSDPhaseAccum)/kFixedPointScaling;
       sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
 
+      filterOut *= kVCOGain;
+
       //Clip to limits of DCO
       if(filterOut > kPLLOffsetMax)
          filterOut = kPLLOffsetMax;
       else if(filterOut < kPLLOffsetMin)
          filterOut = kPLLOffsetMin;
 
-      //int32_t newDCOControlVal = kDFLLFineMax - filterOut;
 
       int32_t newPLLControlVal = -filterOut;
       gLastPLLControlVal = newPLLControlVal;
@@ -171,7 +179,7 @@ void PitInit(int timerIdx, uint32_t cycles)
 void SetupUSBHook()
 {
 //we want 1 kHz
-PitInit(PIT_USBLOCKTIMER_IDX, 12*1000);
+PitInit(PIT_USBLOCKTIMER_IDX, PIT_USBLOCKTIMER_CLK_HZ/1000);
 
 USB1_SetHandler(&USBHandlerHook);
 

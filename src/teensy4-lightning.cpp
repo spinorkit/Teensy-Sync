@@ -19,6 +19,8 @@ For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 // #define INTERRUPT_TIMER 
 #define ADC_TIMER
 
+#define OUTPUT_USB_SOF_PLL_SIGNALS 1
+
 #define __get_PRIMASK __get_primask
 #define __set_PRIMASK __set_primask
 
@@ -39,6 +41,8 @@ For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 
 #include <SPI.h>
 #include <RH_RF95.h>
+
+#include "usb-locking.h"
 
 
 int LEDpin = 5;
@@ -191,9 +195,11 @@ volatile int32_t gLastUSBSOFTimeus = 0;
 
 void setup()
 {
-  auto irqState = saveIRQState();
+  //auto irqState = saveIRQState();
 
-  restoreIRQState(irqState);
+   SetupUSBHook();
+
+  //restoreIRQState(irqState);
 
   Serial.begin(0); //baud rate is ignored
   while (!Serial)
@@ -276,8 +282,25 @@ volatile uint16_t adc_val;
 void adc0_isr()
 {
   adc_val = (int16_t)ADC1_R0;
-  int16_t iResult = (adc_val << 4) - 0x8000;
-  gSampleBuffers[0].Push(iResult);
+  int16_t val = (adc_val << 4) - 0x8000;
+
+#ifdef OUTPUT_USB_SOF_PLL_SIGNALS
+// if(chan - kADCStartChan == 0)
+//    {
+//    //val = gLastBit;
+//    //gLastBit = 1-gLastBit;
+//    val = gPrevFrameTick;
+//    if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
+//       val -= kHighSpeedTimerTicksPerUSBFrame;
+//    }
+// else if(chan - kADCStartChan == 1)
+   {
+   val = gLastPLLControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
+   }
+val += 2048;
+#endif
+
+  gSampleBuffers[0].Push(val);
   //digitalWrite(outputTestPin, gUSBBPinState = !gUSBBPinState);
   asm("DSB");
 }
