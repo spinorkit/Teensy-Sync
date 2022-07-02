@@ -430,6 +430,10 @@ Serial.println("CCM_ANALOG_PLL_SYS_DENOM: "+String(CCM_ANALOG_PLL_SYS_DENOM));
   // If you are using RFM95/96/97/98 modules which uses the PA_BOOST transmitter pin, then 
   // you can set transmitter powers from 5 to 23 dBm:
   rf95.setTxPower(23, false);
+
+  CCM_ANALOG_PLL_SYS_DENOM = 1024;
+  delay(1);
+   CCM_ANALOG_PLL_SYS_NUM = -1024 & 0x3fffffff;
 }
 
 int16_t packetnum = 0;  // packet counter, we increment per xmission
