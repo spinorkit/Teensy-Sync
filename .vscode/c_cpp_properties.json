@@ -10,10 +10,10 @@
             "includePath": [
                 "e:/GitHub/Teensy-Sync/include",
                 "e:/GitHub/Teensy-Sync/src",
+                "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/ADC",
                 "e:/GitHub/Teensy-Sync/.pio/libdeps/teensy41/RadioHead",
                 "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/SPI",
                 "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/cores/teensy4",
-                "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/ADC",
                 "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/AccelStepper/src",
                 "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/Adafruit_NeoPixel",
                 "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/Adafruit_STMPE610",
@@ -118,10 +118,10 @@
                 "path": [
                     "e:/GitHub/Teensy-Sync/include",
                     "e:/GitHub/Teensy-Sync/src",
+                    "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/ADC",
                     "e:/GitHub/Teensy-Sync/.pio/libdeps/teensy41/RadioHead",
                     "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/SPI",
                     "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/cores/teensy4",
-                    "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/ADC",
                     "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/AccelStepper/src",
                     "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/Adafruit_NeoPixel",
                     "C:/Users/Kit/.platformio/packages/framework-arduinoteensy/libraries/Adafruit_STMPE610",
@@ -223,14 +223,14 @@
                 ]
             },
             "defines": [
-                "PLATFORMIO=60002",
+                "PLATFORMIO=60103",
                 "__IMXRT1062__",
                 "ARDUINO_TEENSY41",
                 "USB_SERIAL",
                 "ARDUINO=10805",
                 "TEENSYDUINO=156",
                 "CORE_TEENSY",
-                "F_CPU=600000000",
+                "F_CPU=528000000",
                 "LAYOUT_US_ENGLISH",
                 ""
             ],
