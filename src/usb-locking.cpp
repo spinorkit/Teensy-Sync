@@ -6,7 +6,7 @@
 #include "usb-locking.h"
 
 
-#define ADI_TEST_PLL_STEP_RESPONSE 0
+#define ADI_TEST_PLL_STEP_RESPONSE 1
 
 //Bug in imxrt.h
 #define CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED		((uint32_t)(1))
@@ -27,7 +27,7 @@ const int32_t kUSBFrameMSBitMask = 1 << (kUSBFrameBits - 1);
 
 volatile int16_t gLastFrameNumber = 0;
 
-volatile int gLastPLLControlVal = 0;
+volatile int gLastUSBPLLErrorValue = 0;
 
 volatile bool gUSBBPinState = false;
 
@@ -157,9 +157,11 @@ if(!(rawFrameNumber & 0x07))
 
 
    int32_t newPLLControlVal = -filterOut;
-   gLastPLLControlVal = newPLLControlVal;
 
    SetPllSysFreqOffset(newPLLControlVal);
+
+   gLastUSBPLLErrorValue = sLastPhase; //newPLLControlVal;
+
 
    //Set DCO control value
    #ifdef PHASE_LOCK_TO_USB_SOF
