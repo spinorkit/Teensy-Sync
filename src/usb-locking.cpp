@@ -6,7 +6,7 @@
 #include "usb-locking.h"
 
 
-#define ADI_TEST_PLL_STEP_RESPONSE 1
+#define ADI_TEST_PLL_STEP_RESPONSE 0
 
 //Bug in imxrt.h
 #define CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED		((uint32_t)(1))
@@ -72,6 +72,12 @@ inline void SetPllSysFreqOffset(int32_t offsetPartsPer2p16)
 offsetPartsPer2p16 -= ((++gFrameCount/10000) & 1) * kPLLOffsetMax/2;
 #endif
 CCM_ANALOG_PLL_SYS_NUM = (offsetPartsPer2p16) & 0x3fffffff; //units of 1 part in 64*1024
+}
+
+
+int32_t USBTimerTick()
+{
+return ((IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].LDVAL - IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].CVAL)*(kHighSpeedTimerTicksPerus*1024*1024/(PIT_USBLOCKTIMER_CLK_HZ/1000000)))>>20;   
 }
 
 

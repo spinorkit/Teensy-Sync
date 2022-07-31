@@ -57,6 +57,7 @@ For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 
 #define SERIALDEBUG SerialUSB1
 
+bool gIsTx = false;
 
 int LEDpin = 5;
 int PWMpin = 19;
@@ -97,11 +98,13 @@ ADC *adc = new ADC(); // adc object;
 
 enum ADIDeviceSynchModes
 {
-  kDeviceSynchNone = 0 | 0,
-  kDeviceSyncRoundTrip = 1 | 0,
-  // would like all future connection to be these types. C series compatable and us timing
-  kDeviceSyncUSBFrameTimes = 2 | 0,
-  kDeviceSynchUSBLocked = 4 | 0
+   kDeviceSynchNone = 0 | 0,
+   kDeviceSyncRoundTrip = 1 | 0,
+   kDeviceSyncUSBFrameTimes = 2 | 0,
+   kDeviceSynchUSBLocked = 4 | 0,
+   kDeviceSynchUSBStartOnSpecifiedFrame = 8 | 0,
+   kDeviceSynchUSBFullSuppport = kDeviceSyncRoundTrip|kDeviceSyncUSBFrameTimes|kDeviceSynchUSBLocked|kDeviceSynchUSBStartOnSpecifiedFrame|0,
+   kDeviceSyncUSBFrameTimesRT = kDeviceSyncRoundTrip | kDeviceSyncUSBFrameTimes
 };
 
 
@@ -157,6 +160,8 @@ void mockSampleData()
 const int kMaxCommandLenBytes = 64;
 
 volatile int32_t gFirstADCPointus = 0;
+
+volatile int32_t gLastTxTick = 0;
 
 enum State
 {
@@ -227,12 +232,16 @@ void SetupRadio()
   // you can set transmitter powers from 5 to 23 dBm:
   rf95.setTxPower(23, false);
 
+  rf95.setModemConfig(RH_RF95::Bw500Cr45Sf128);
+  rf95.setPreambleLength(8);
+
 }
 
 void gOnUSBSOF(int16_t frameNumber)
 {
-if(gTXPrepared && (frameNumber & 0x3ff) == 1)
+if(gTXPrepared /*&& (frameNumber & 0x3ff) == 1*/)
    {
+   gLastTxTick = USBTimerTick();
    rf95.transmit();      
    gTXPrepared = false;
    }
@@ -240,58 +249,66 @@ if(gTXPrepared && (frameNumber & 0x3ff) == 1)
 
 void loopRadio()
    {
-   static uint16_t sLastFrameNumber = gLastFrameNumber;
+   if(gIsTx)
+      {
+      static uint16_t sLastFrameNumber = gLastFrameNumber;
 
-   if(gLastFrameNumber & 0x3ff)
-      return;
+      if(gLastFrameNumber & 0x3ff)
+         return;
 
-   if(gLastFrameNumber == sLastFrameNumber)
-      return;
+      if(gLastFrameNumber == sLastFrameNumber)
+         return;
 
-   sLastFrameNumber = gLastFrameNumber;
+      sLastFrameNumber = gLastFrameNumber;
 
-  //delay(1000); // Wait 1 second between transmits, could also 'sleep' here!
-  //Serial.println("Transmitting..."); // Send a message to rf95_server
-  
-  char radiopacket[20] = "Hello World #      ";
-  itoa(packetnum++, radiopacket+13, 10);
-  //Serial.print("Sending "); Serial.println(radiopacket);
-  radiopacket[19] = 0;
-  
-  //Serial.println("Sending...");
-  //delay(10);
-  //rf95.send((uint8_t *)radiopacket, 20);
-  rf95.prepareToTx((uint8_t *)radiopacket, 20);
-  gTXPrepared = true;
-  return;
-
-  SERIALDEBUG.println("Waiting for packet to complete..."); 
-  delay(10);
-  rf95.waitPacketSent();
-  // Now wait for a reply
-  uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-  uint8_t len = sizeof(buf);
-
-  SERIALDEBUG.println("Waiting for reply...");
-  if (rf95.waitAvailableTimeout(1000))
-  { 
-    // Should be a reply message for us now   
-    if (rf95.recv(buf, &len))
+   //delay(1000); // Wait 1 second between transmits, could also 'sleep' here!
+   //Serial.println("Transmitting..."); // Send a message to rf95_server
+   
+   //char radiopacket[20] = "Hello World #      ";
+   //itoa(packetnum++, radiopacket+13, 10);
+   ////Serial.print("Sending "); Serial.println(radiopacket);
+   //radiopacket[19] = 0;
+   
+   //Serial.println("Sending...");
+   //delay(10);
+   //rf95.send((uint8_t *)radiopacket, 20);
+   //rf95.prepareToTx((uint8_t *)radiopacket, 20);
+   rf95.prepareToTx((uint8_t *)&sLastFrameNumber, 2);
+   gTXPrepared = true;
+   return;
+   }
+else
    {
-      SERIALDEBUG.print("Got reply: ");
-      SERIALDEBUG.println((char*)buf);
-      SERIALDEBUG.print("RSSI: ");
-      SERIALDEBUG.println(rf95.lastRssi(), DEC);    
-    }
-    else
-    {
-      SERIALDEBUG.println("Receive failed");
-    }
-  }
-  else
-  {
-    SERIALDEBUG.println("No reply, is there a listener around?");
-  }
+   //SERIALDEBUG.println("Waiting for packet to complete..."); 
+   //delay(10);
+   //rf95.waitPacketSent();
+   // Now wait for a reply
+   uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+   uint8_t len = sizeof(buf);
+
+   //SERIALDEBUG.println("Waiting for reply...");
+   //if (rf95.waitAvailableTimeout(1000))
+      { 
+      // Should be a reply message for us now   
+      if (rf95.recv(buf, &len))
+         {
+         SERIALDEBUG.print("Rx packet at [us]: ");
+         SERIALDEBUG.println(rf95.GetLastRxPacketTick()/4);
+         //SERIALDEBUG.println((char*)buf);
+         //SERIALDEBUG.print("RSSI: ");
+         //SERIALDEBUG.println(rf95.lastRssi(), DEC);    
+         }
+      else
+         {
+         //SERIALDEBUG.println("Receive failed");
+         }
+      }
+   // else
+   //    {
+   //    SERIALDEBUG.println("No reply, is there a listener around?");
+   //    }
+
+   }
 
 }
 
@@ -393,11 +410,11 @@ void sendFirstSampleTimeIfNeeded()
 
 #ifdef ADC_TIMER
 
-volatile uint16_t adc_val;
+//volatile uint16_t adc_val;
 
 void adc0_isr()
 {
-  adc_val = (int16_t)ADC1_R0;
+  int16_t adc_val = (int16_t)ADC1_R0;
   int16_t val = (adc_val << 4) - 0x8000;
 
 #ifdef OUTPUT_USB_SOF_PLL_SIGNALS
@@ -413,7 +430,6 @@ void adc0_isr()
    {
    val = gLastUSBPLLErrorValue;//OSCCTRL->DFLLVAL.bit.FINE;
    }
-val += 2048;
 #endif
 
   gSampleBuffers[0].Push(val);
@@ -423,9 +439,15 @@ val += 2048;
 
 void adc1_isr()
 {
-  adc_val = (int16_t)ADC2_R0;
-  int16_t iResult = (adc_val << 4) - 0x8000;
-  gSampleBuffers[1].Push(iResult);
+  int16_t adc_val = (int16_t)ADC2_R0;
+  int16_t val = (adc_val << 4) - 0x8000;
+  #ifdef OUTPUT_USB_SOF_PLL_SIGNALS
+  if(gIsTx)
+     val = gLastTxTick;
+  else
+     val = rf95.GetLastRxPacketTick();
+  #endif
+  gSampleBuffers[1].Push(val);
   //digitalWrite(outputTestPin, gUSBBPinState = !gUSBBPinState);
   asm("DSB");
 }
@@ -481,6 +503,34 @@ void loop()
     case 's': //stop sampling
       StopSampling();
       break;
+   case 'n':   //return micro second time now
+      {
+      int32_t now = micros();
+      //uint64_t now64 = micros64();
+      //digitalWrite(5, HIGH);
+
+      auto timeRequestNumber = cmdBuf[1];
+      TimePacket timePacket(now, timeRequestNumber);
+      timePacket.write(Serial);
+
+      //digitalWrite(5, LOW);
+
+      break;
+      }
+   case 'u':   //time of last USB SOF
+      {
+      auto irqState = saveIRQState(); //disable interrupts
+      auto lastUSBSOFTimeus = gLastUSBSOFTimeus;
+      auto lastFrameNumber = gLastFrameNumber;
+      int32_t now = micros();
+      restoreIRQState(irqState);
+      
+      auto timeRequestNumber = cmdBuf[1];
+      LatestUSBFrameTimePacket packet(now, timeRequestNumber, lastFrameNumber, lastUSBSOFTimeus);
+      packet.write(Serial);
+      break;
+      }
+
     case 'v': //version info as JSON
       Serial.print("{");
       Serial.print("\"deviceClass\": \"Arduino_Example\",");
