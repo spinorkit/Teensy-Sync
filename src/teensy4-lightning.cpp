@@ -15,6 +15,16 @@ See also src/ADCExample.io for a concise example.
 For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 */
 
+//Default USB
+//USB\VID_16C0&PID_0483&MI_00\7&11FE0FF2&0&0000
+
+
+//DUAL_USB:
+//USB\VID_16C0&PID_048B&MI_02\7&253AF44&0&0002
+//USB\VID_16C0&PID_048B&MI_00\7&253AF44&0&0000
+
+
+
 // One of these two timing options should be commented out.
 // #define INTERRUPT_TIMER 
 #define ADC_TIMER
@@ -44,6 +54,8 @@ For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 
 
 #include "usb-locking.h"
+
+#define SERIALDEBUG SerialUSB1
 
 
 int LEDpin = 5;
@@ -160,39 +172,7 @@ volatile bool gFirstSampleTimeRequested = false;
 
 volatile bool gADCstate = false;
 
-#if 0
-const int kDFLLFineMax = 511;
-const int kDFLLFineMin = -512;
-
-extern "C" void UDD_Handler(void);
-
-const uint32_t kUSBFramePeriodus = 1000;
-
-volatile uint16_t gLastFrameNumber = 0;
-volatile int32_t gPrevFrameTick = -1;
-
-volatile int gLastDCOControlVal = 0;
-
-const int kHighSpeedTimerTicksPerus = 4;
-const int kHighSpeedTimerTicksPerUSBFrame = 1000 * kHighSpeedTimerTicksPerus;
-
-const int kOneOverLeadGainus = 1; // 1/proportional gain
-
-const int kOneOverLagGainus = 2048; // 1/integral gain
-const int kOneOverClippedLeadGainus = 1;
-
-const int kFixedPointScaling = kOneOverLagGainus * kHighSpeedTimerTicksPerus;
-
-//Integrator for integral feedback to remove DC error
-volatile int32_t sPSDPhaseAccum = 0;
-
-//First order LPF for lead (proportional) feedback
-volatile int32_t gLeadPhaseAccum = 0;
-const int kLeadPhaseTC = 16;
-
-volatile int32_t gLastUSBSOFTimeus = 0;
-
-#endif
+volatile bool gTXPrepared = false;
 
 #if defined(TEENSYDUINO)
   /* Teensy 3.x w/wing */
@@ -211,7 +191,7 @@ volatile int32_t gLastUSBSOFTimeus = 0;
 #define RF95_FREQ 915.0
 
 // Singleton instance of the radio driver
-RH_RF95 rf95(RFM95_CS, RFM95_INT);
+RH_RF95 rf95(RFM95_CS, RFM95_INT, hardware_spi);
 
 int16_t packetnum = 0;  // packet counter, we increment per xmission
 
@@ -224,19 +204,21 @@ void SetupRadio()
   digitalWrite(RFM95_RST, HIGH);
   delay(10);
 
+  rf95.setSPIFrequency(RHGenericSPI::Frequency8MHz);
+
   while (!rf95.init()) {
-    Serial.println("LoRa radio init failed");
-    Serial.println("Uncomment '#define SERIAL_DEBUG' in RH_RF95.cpp for detailed debug info");
+    SERIALDEBUG.println("LoRa radio init failed");
+    SERIALDEBUG.println("Uncomment '#define SERIAL_DEBUG' in RH_RF95.cpp for detailed debug info");
     while (1);
   }
-  Serial.println("LoRa radio init OK!");
+  SERIALDEBUG.println("LoRa radio init OK!");
 
   // Defaults after init are 434.0MHz, modulation GFSK_Rb250Fd250, +13dbM
   if (!rf95.setFrequency(RF95_FREQ)) {
-    Serial.println("setFrequency failed");
+    SERIALDEBUG.println("setFrequency failed");
     while (1);
   }
-  Serial.print("Set Freq to: "); Serial.println(RF95_FREQ);
+  SERIALDEBUG.print("Set Freq to: "); SERIALDEBUG.println(RF95_FREQ);
   
   // Defaults after init are 434.0MHz, 13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
 
@@ -247,46 +229,68 @@ void SetupRadio()
 
 }
 
-void loopRadio()
+void gOnUSBSOF(int16_t frameNumber)
 {
-  delay(1000); // Wait 1 second between transmits, could also 'sleep' here!
-  Serial.println("Transmitting..."); // Send a message to rf95_server
+if(gTXPrepared && (frameNumber & 0x3ff) == 1)
+   {
+   rf95.transmit();      
+   gTXPrepared = false;
+   }
+}
+
+void loopRadio()
+   {
+   static uint16_t sLastFrameNumber = gLastFrameNumber;
+
+   if(gLastFrameNumber & 0x3ff)
+      return;
+
+   if(gLastFrameNumber == sLastFrameNumber)
+      return;
+
+   sLastFrameNumber = gLastFrameNumber;
+
+  //delay(1000); // Wait 1 second between transmits, could also 'sleep' here!
+  //Serial.println("Transmitting..."); // Send a message to rf95_server
   
   char radiopacket[20] = "Hello World #      ";
   itoa(packetnum++, radiopacket+13, 10);
-  Serial.print("Sending "); Serial.println(radiopacket);
+  //Serial.print("Sending "); Serial.println(radiopacket);
   radiopacket[19] = 0;
   
-  Serial.println("Sending...");
-  delay(10);
-  rf95.send((uint8_t *)radiopacket, 20);
+  //Serial.println("Sending...");
+  //delay(10);
+  //rf95.send((uint8_t *)radiopacket, 20);
+  rf95.prepareToTx((uint8_t *)radiopacket, 20);
+  gTXPrepared = true;
+  return;
 
-  Serial.println("Waiting for packet to complete..."); 
+  SERIALDEBUG.println("Waiting for packet to complete..."); 
   delay(10);
   rf95.waitPacketSent();
   // Now wait for a reply
   uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
   uint8_t len = sizeof(buf);
 
-  Serial.println("Waiting for reply...");
+  SERIALDEBUG.println("Waiting for reply...");
   if (rf95.waitAvailableTimeout(1000))
   { 
     // Should be a reply message for us now   
     if (rf95.recv(buf, &len))
    {
-      Serial.print("Got reply: ");
-      Serial.println((char*)buf);
-      Serial.print("RSSI: ");
-      Serial.println(rf95.lastRssi(), DEC);    
+      SERIALDEBUG.print("Got reply: ");
+      SERIALDEBUG.println((char*)buf);
+      SERIALDEBUG.print("RSSI: ");
+      SERIALDEBUG.println(rf95.lastRssi(), DEC);    
     }
     else
     {
-      Serial.println("Receive failed");
+      SERIALDEBUG.println("Receive failed");
     }
   }
   else
   {
-    Serial.println("No reply, is there a listener around?");
+    SERIALDEBUG.println("No reply, is there a listener around?");
   }
 
 }
@@ -295,6 +299,9 @@ void loopRadio()
 void setup()
 {
   //auto irqState = saveIRQState();
+
+//https://forum.pjrc.com/threads/59828-Teensy-4-Set-interrupt-priority-on-given-pins
+//they all default to 128 (except the ones that have different defaults, 64 for serial ports, 32 for systick, etc...)
 
    SetupUSBHook();
 
@@ -305,6 +312,7 @@ digitalWrite(RFM95_RST, HIGH);
   
 pinMode(RFM95_CS, OUTPUT);          // Chip Select is an output
 
+SerialUSB1.begin(0);
 
   Serial.begin(0); //baud rate is ignored
   while (!Serial)
@@ -333,6 +341,7 @@ pinMode(RFM95_CS, OUTPUT);          // Chip Select is an output
 
 void StartSampling()
 {
+   SERIALDEBUG.println("Start");
   for (int chan(0); chan < kADCChannels; ++chan)
   {
     auto &buffer = gSampleBuffers[chan];
@@ -447,7 +456,7 @@ adc->adc1->stopTimer();
 
 void loop()
 {
-   //  loopRadio();
+   loopRadio();
 
   int hasRx = Serial.peek();
 

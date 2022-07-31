@@ -97,12 +97,17 @@ if(!(rawFrameNumber & 0x07))
 
    int16_t frameNumber = rawFrameNumber >> 3;
 
+   gOnUSBSOF(frameNumber);
+
    static int32_t sLastPhase = 0;
 
    int phase = frameTick;
    //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
    if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
       phase -= kHighSpeedTimerTicksPerUSBFrame;
+
+   gLastUSBPLLErrorValue = phase;//phase; //newPLLControlVal;
+
 
    // If phase > 0 the USB frame was later than the SYSTICK wrap so we need to
    // slow down the system clock a little.
@@ -160,7 +165,7 @@ if(!(rawFrameNumber & 0x07))
 
    SetPllSysFreqOffset(newPLLControlVal);
 
-   gLastUSBPLLErrorValue = sLastPhase; //newPLLControlVal;
+   // gLastUSBPLLErrorValue = sLastPhase; //newPLLControlVal;
 
 
    //Set DCO control value
@@ -191,6 +196,9 @@ void USB1_SetHandler(void (*pf_isr)(void))
 {
 //__disable_irq();
 NVIC_DISABLE_IRQ(IRQ_USB1);
+
+//they all default to 128 (except the ones that have different defaults, 64 for serial ports, 32 for systick, etc...
+NVIC_SET_PRIORITY(IRQ_USB1, 48);
 attachInterruptVector(IRQ_USB1, &USBHandlerHook);
 usb_start_sof_interrupts(NUM_INTERFACE);
 NVIC_ENABLE_IRQ(IRQ_USB1);
