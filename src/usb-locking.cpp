@@ -90,111 +90,116 @@ extern void usb_start_sof_interrupts(int interface);
 
 void USBHandlerHook(void)
 {
-int rawFrameNumber = USB1_FRINDEX;
-//USB1_USBSTS = USB_USBSTS_SRI; // clear prior SOF
-if(!(rawFrameNumber & 0x07))
+uint32_t status = USB1_USBSTS;
+if(status & USB_USBSTS_SRI)
    {
-   //1 ms SOF frame   
-   //Measure phase using PIT timer. Convert to 0.25 us ticks using a runtime multiply and compile time divides for speed.
-   //int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
-   int32_t frameTick = ((IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].LDVAL - IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].CVAL)*(kHighSpeedTimerTicksPerus*1024*1024/(PIT_USBLOCKTIMER_CLK_HZ/1000000)))>>20;
+   int rawFrameNumber = USB1_FRINDEX;
 
-   int32_t newUSBSOFTimeus = micros();
-
-   int16_t frameNumber = rawFrameNumber >> 3;
-
-   gOnUSBSOF(frameNumber);
-
-   static int32_t sLastPhase = 0;
-
-   int phase = frameTick;
-   //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
-   if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
-      phase -= kHighSpeedTimerTicksPerUSBFrame;
-
-   gLastUSBPLLErrorValue = phase;//phase; //newPLLControlVal;
-
-
-   // If phase > 0 the USB frame was later than the SYSTICK wrap so we need to
-   // slow down the system clock a little.
-
-   // One-sided clip of phase to reduce effect of ISR latency spikes.
-   //  I.e. clip large +ve going deltas resulting from the ISR being delayed, causing phase
-   //  to be larger than it should be.
-   int32_t deltaPhaseTicks = phase - sLastPhase;
-   if (gUSBLocked && deltaPhaseTicks > kMaxRateErrorClipTicksPerms)
+   //USB1_USBSTS = USB_USBSTS_SRI; // clear prior SOF
+   if(!(rawFrameNumber & 0x07))
       {
-      phase = sLastPhase + kMaxRateErrorClipTicksPerms;
-      //digitalWrite(LED_BUILTIN, LOW); // Diagnostic
+      //1 ms SOF frame   
+      //Measure phase using PIT timer. Convert to 0.25 us ticks using a runtime multiply and compile time divides for speed.
+      //int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
+      int32_t frameTick = ((IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].LDVAL - IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].CVAL)*(kHighSpeedTimerTicksPerus*1024*1024/(PIT_USBLOCKTIMER_CLK_HZ/1000000)))>>20;
+
+      int32_t newUSBSOFTimeus = micros();
+
+      int16_t frameNumber = rawFrameNumber >> 3;
+
+      gOnUSBSOF(frameNumber);
+
+      static int32_t sLastPhase = 0;
+
+      int phase = frameTick;
+      //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
+      if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
+         phase -= kHighSpeedTimerTicksPerUSBFrame;
+
+      gLastUSBPLLErrorValue = phase;//phase; //newPLLControlVal;
+
+
+      // If phase > 0 the USB frame was later than the SYSTICK wrap so we need to
+      // slow down the system clock a little.
+
+      // One-sided clip of phase to reduce effect of ISR latency spikes.
+      //  I.e. clip large +ve going deltas resulting from the ISR being delayed, causing phase
+      //  to be larger than it should be.
+      int32_t deltaPhaseTicks = phase - sLastPhase;
+      if (gUSBLocked && deltaPhaseTicks > kMaxRateErrorClipTicksPerms)
+         {
+         phase = sLastPhase + kMaxRateErrorClipTicksPerms;
+         //digitalWrite(LED_BUILTIN, LOW); // Diagnostic
+         }
+
+      sLastPhase = phase;
+
+      //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
+      gLeadPhaseAccum += phase;
+      int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
+      gLeadPhaseAccum -= leadPhase;
+
+      // First order LPF for lock detect
+      static uint32_t sLockDetectAccum = 0;
+
+      sLockDetectAccum += abs(leadPhase);
+      int32_t lockError = sLockDetectAccum / kLockDetectAccumTCms;
+
+      sLockDetectAccum -= lockError;
+      gUSBLocked = abs(lockError) < kLockedPhaseLimitTicks;
+
+
+      //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
+      int signOfPhase = 0;
+      if(phase > 0)
+         signOfPhase = 1;
+      else if(phase < 0)
+         signOfPhase = -1;
+
+      //Calculate the filtered error signal
+      int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
+         leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
+         sPSDPhaseAccum)/kFixedPointScaling;
+      sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
+
+      filterOut *= kVCOGain;
+
+      //Clip to limits of DCO
+      if(filterOut > kPLLOffsetMax)
+         filterOut = kPLLOffsetMax;
+      else if(filterOut < kPLLOffsetMin)
+         filterOut = kPLLOffsetMin;
+
+
+      int32_t newPLLControlVal = -filterOut;
+
+      SetPllSysFreqOffset(newPLLControlVal);
+
+      // gLastUSBPLLErrorValue = sLastPhase; //newPLLControlVal;
+
+
+      //Set DCO control value
+      #ifdef PHASE_LOCK_TO_USB_SOF
+      #if defined(__SAMD51__)
+      OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+      #else
+      //SAMD21 has 10 bit fine DCO control
+      SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
+      #endif
+      #endif
+
+      gLastFrameNumber = frameNumber;
+      gLastUSBSOFTimeus = newUSBSOFTimeus;
+
+      gPrevFrameTick = frameTick;
+
+
+      //int32_t frameTick = micros();
+      gLastFrameNumber = frameNumber;
+      gPrevFrameTick = frameTick;
       }
-
-   sLastPhase = phase;
-
-   //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
-   gLeadPhaseAccum += phase;
-   int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
-   gLeadPhaseAccum -= leadPhase;
-
-   // First order LPF for lock detect
-   static uint32_t sLockDetectAccum = 0;
-
-   sLockDetectAccum += abs(leadPhase);
-   int32_t lockError = sLockDetectAccum / kLockDetectAccumTCms;
-
-   sLockDetectAccum -= lockError;
-   gUSBLocked = abs(lockError) < kLockedPhaseLimitTicks;
-
-
-   //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
-   int signOfPhase = 0;
-   if(phase > 0)
-      signOfPhase = 1;
-   else if(phase < 0)
-      signOfPhase = -1;
-
-   //Calculate the filtered error signal
-   int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
-      leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
-      sPSDPhaseAccum)/kFixedPointScaling;
-   sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
-
-   filterOut *= kVCOGain;
-
-   //Clip to limits of DCO
-   if(filterOut > kPLLOffsetMax)
-      filterOut = kPLLOffsetMax;
-   else if(filterOut < kPLLOffsetMin)
-      filterOut = kPLLOffsetMin;
-
-
-   int32_t newPLLControlVal = -filterOut;
-
-   SetPllSysFreqOffset(newPLLControlVal);
-
-   // gLastUSBPLLErrorValue = sLastPhase; //newPLLControlVal;
-
-
-   //Set DCO control value
-   #ifdef PHASE_LOCK_TO_USB_SOF
-   #if defined(__SAMD51__)
-   OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
-   #else
-   //SAMD21 has 10 bit fine DCO control
-   SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
-   #endif
-   #endif
-
-   gLastFrameNumber = frameNumber;
-   gLastUSBSOFTimeus = newUSBSOFTimeus;
-
-   gPrevFrameTick = frameTick;
-
-
-   //int32_t frameTick = micros();
-   gLastFrameNumber = frameNumber;
-   gPrevFrameTick = frameTick;
+   gLastRawFrameNumber = rawFrameNumber;
    }
-gLastRawFrameNumber = rawFrameNumber;
 usb_isr();
 }
 
