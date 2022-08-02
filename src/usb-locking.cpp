@@ -77,7 +77,19 @@ CCM_ANALOG_PLL_SYS_NUM = (offsetPartsPer2p16) & 0x3fffffff; //units of 1 part in
 
 int32_t USBTimerTick()
 {
-return ((IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].LDVAL - IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].CVAL)*(kHighSpeedTimerTicksPerus*1024*1024/(PIT_USBLOCKTIMER_CLK_HZ/1000000)))>>20;   
+int32_t tick;
+int16_t rawFrameNumber0 = USB1_FRINDEX >> 3;
+for(;;)
+   {
+   tick = IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].CVAL;
+   int16_t rawFrameNumber1 = USB1_FRINDEX >> 3;
+   if(rawFrameNumber1 == rawFrameNumber0)
+      break;
+   rawFrameNumber0 = rawFrameNumber1;
+   } 
+
+return (rawFrameNumber0 & 0x3ff) * kUSBFramePeriodus * kHighSpeedTimerTicksPerus + 
+   (((IMXRT_PIT_CHANNELS[PIT_USBLOCKTIMER_IDX].LDVAL - tick)*(kHighSpeedTimerTicksPerus*1024*1024/(PIT_USBLOCKTIMER_CLK_HZ/1000000)))>>20);   
 }
 
 

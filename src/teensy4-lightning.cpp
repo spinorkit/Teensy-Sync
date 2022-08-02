@@ -57,7 +57,7 @@ For a pin layout see https://www.pjrc.com/teensy-4-1-released/.
 
 #define SERIALDEBUG SerialUSB1
 
-bool gIsTx = false;
+bool gIsTx = true;
 
 int LEDpin = 5;
 int PWMpin = 19;
@@ -233,13 +233,13 @@ void SetupRadio()
   rf95.setTxPower(23, false);
 
   rf95.setModemConfig(RH_RF95::Bw500Cr45Sf128);
-  rf95.setPreambleLength(8);
+  rf95.setPreambleLength(6);
 
 }
 
 void gOnUSBSOF(int16_t frameNumber)
 {
-if(gTXPrepared /*&& (frameNumber & 0x3ff) == 1*/)
+if(gTXPrepared && (frameNumber & 0x3ff) == 2)
    {
    gLastTxTick = USBTimerTick();
    rf95.transmit();      
@@ -337,7 +337,15 @@ SerialUSB1.begin(0);
 
   Serial.setTimeout(50);
 
+//SERIALDEBUG.println("IRQ_USB1 priority: "+String(NVIC_GET_PRIORITY(IRQ_USB1)));
+//SERIALDEBUG.println("IRQ_USBPHY0 priority: "+String(NVIC_GET_PRIORITY(IRQ_USBPHY0)));
+
+
   SetupRadio();
+
+SERIALDEBUG.println("IRQ_GPIO6789 priority: "+String(NVIC_GET_PRIORITY(IRQ_GPIO6789)));
+SERIALDEBUG.println("IRQ_PIT priority: "+String(NVIC_GET_PRIORITY(IRQ_PIT)));
+
 
 #ifdef ADC_TIMER
 
@@ -443,9 +451,9 @@ void adc1_isr()
   int16_t val = (adc_val << 4) - 0x8000;
   #ifdef OUTPUT_USB_SOF_PLL_SIGNALS
   if(gIsTx)
-     val = gLastTxTick;
+     val = gLastTxTick/2;
   else
-     val = rf95.GetLastRxPacketTick();
+     val = rf95.GetLastRxPacketTick()/2;
   #endif
   gSampleBuffers[1].Push(val);
   //digitalWrite(outputTestPin, gUSBBPinState = !gUSBBPinState);
